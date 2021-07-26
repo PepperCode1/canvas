@@ -169,7 +169,7 @@ public class IndexSlab extends AbstractGlBuffer implements SynchronizedBuffer {
 		IndexSlab result = fullSlabIndex;
 
 		if (result == null) {
-			result = new IndexSlab();
+			result = IndexSlab.claim();
 			result.allocateAndLoad(0, SlabAllocator.MAX_SLAB_QUAD_VERTEX_COUNT);
 			result.upload();
 			result.unbind();

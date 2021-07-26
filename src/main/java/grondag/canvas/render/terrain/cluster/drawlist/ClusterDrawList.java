@@ -20,6 +20,7 @@ import java.util.IdentityHashMap;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import org.jetbrains.annotations.Nullable;
+import org.lwjgl.PointerBuffer;
 
 import grondag.canvas.render.terrain.cluster.ClusteredDrawableStorage;
 import grondag.canvas.render.terrain.cluster.Slab;
@@ -30,11 +31,13 @@ import grondag.canvas.varia.GFX;
 
 public class ClusterDrawList {
 	record DrawSpec(Slab slab, IndexSlab indexSlab, int triVertexCount, int indexBaseByteAddress) { }
+	record NewDrawSpec(Slab slab, int[] triVertexCount, int[] baseIndices, PointerBuffer indexPointers) { }
 
 	final ObjectArrayList<ClusteredDrawableStorage> stores = new ObjectArrayList<>();
 	final VertexCluster cluster;
 	final RealmDrawList owner;
 	private final ObjectArrayList<DrawSpec> drawSpecs = new ObjectArrayList<>();
+	private final ObjectArrayList<NewDrawSpec> newDrawSpecs = new ObjectArrayList<>();
 
 	ClusterDrawList(VertexCluster cluster, RealmDrawList owner) {
 		this.cluster = cluster;
@@ -42,6 +45,11 @@ public class ClusterDrawList {
 	}
 
 	IndexSlab build(IndexSlab indexSlab) {
+		buildNewNew();
+		return null;
+	}
+
+	IndexSlab buildOld(IndexSlab indexSlab) {
 		assert drawSpecs.isEmpty();
 
 		if (cluster.realm == VertexClusterRealm.TRANSLUCENT) {
@@ -51,6 +59,93 @@ public class ClusterDrawList {
 		}
 
 		return indexSlab;
+	}
+
+	void buildNewNew() {
+		assert newDrawSpecs.isEmpty();
+
+		if (cluster.realm == VertexClusterRealm.TRANSLUCENT) {
+			buildTranslucentNew();
+		} else {
+			buildSolidNew();
+		}
+	}
+
+	/** Minimizes binds/calls. */
+	private void buildSolidNew() {
+		final IdentityHashMap<Slab, SolidSpecList> map = new IdentityHashMap<>();
+
+		// first group regions by slab
+		for (var region : stores) {
+			for (var alloc : region.allocation().allocations()) {
+				var list = map.get(alloc.slab);
+
+				if (list == null) {
+					list = new SolidSpecList();
+					map.put(alloc.slab, list);
+				}
+
+				list.add(alloc);
+				list.specQuadVertexCount += alloc.quadVertexCount;
+			}
+		}
+
+		for (var list: map.values()) {
+			assert list.specQuadVertexCount <= IndexSlab.MAX_INDEX_SLAB_QUAD_VERTEX_COUNT;
+			addSpecNew(list, list.specQuadVertexCount);
+		}
+	}
+
+	/** Maintains region sort order at the cost of extra binds/calls if needed. */
+	private void buildTranslucentNew() {
+		Slab lastSlab = null;
+		final ObjectArrayList<SlabAllocation> specAllocations = new ObjectArrayList<>();
+		int specQuadVertexCount = 0;
+
+		for (var region : stores) {
+			for (var alloc : region.allocation().allocations()) {
+				if (alloc.slab != lastSlab) {
+					if (lastSlab != null) {
+						addSpecNew(specAllocations, specQuadVertexCount);
+					}
+
+					specQuadVertexCount = 0;
+					lastSlab = alloc.slab;
+				}
+
+				specAllocations.add(alloc);
+				specQuadVertexCount += alloc.quadVertexCount;
+			}
+		}
+
+		addSpecNew(specAllocations, specQuadVertexCount);
+	}
+
+	/**
+	 * Returns the index slab that should be used for next call.
+	 * Does nothing if region list is empty and clears region list when done.
+	 */
+	private void addSpecNew(ObjectArrayList<SlabAllocation> specAllocations, int specQuadVertexCount) {
+		assert specQuadVertexCount >= 0;
+		assert !specAllocations.isEmpty() : "Vertex count is non-zero but region list is empty.";
+
+		final var slab = specAllocations.get(0).slab;
+		final var limit = specAllocations.size();
+
+		final int[] vcount = new int[limit];
+		final int[] bIndex = new int[limit];
+		final var pBuff = PointerBuffer.allocateDirect(limit);
+
+		for (int i = 0; i < limit; ++i) {
+			final var alloc = specAllocations.get(i);
+			assert alloc.slab == slab;
+			vcount[i] = alloc.triVertexCount();
+			bIndex[i] = alloc.baseQuadVertexIndex;
+			pBuff.put(i, 0L);
+		}
+
+		newDrawSpecs.add(new NewDrawSpec(slab, vcount, bIndex, pBuff));
+		specAllocations.clear();
 	}
 
 	/** Maintains region sort order at the cost of extra binds/calls if needed. */
@@ -149,7 +244,7 @@ public class ClusterDrawList {
 	}
 
 	public void draw() {
-		drawNew();
+		drawNewNew();
 	}
 
 	public void drawNew() {
@@ -160,8 +255,23 @@ public class ClusterDrawList {
 
 			spec.slab.bind();
 			spec.indexSlab.bind();
+			//GFX.glMultiDrawElementsBaseVertex(GFX.GL_TRIANGLES, vertexCounts, GFX.GL_UNSIGNED_SHORT, indexPointers, baseIndices);
 			GFX.drawElements(GFX.GL_TRIANGLES, spec.triVertexCount, GFX.GL_UNSIGNED_SHORT, spec.indexBaseByteAddress);
 		}
+	}
+
+	public void drawNewNew() {
+		final int limit = newDrawSpecs.size();
+
+		for (int i = 0; i < limit; ++i) {
+			var spec = newDrawSpecs.get(i);
+
+			spec.slab.bind();
+			IndexSlab.fullSlabIndex().bind();
+			GFX.glMultiDrawElementsBaseVertex(GFX.GL_TRIANGLES, spec.triVertexCount, GFX.GL_UNSIGNED_SHORT, spec.indexPointers, spec.baseIndices);
+		}
+
+		IndexSlab.fullSlabIndex().unbind();
 	}
 
 	// WIP: use a version of this for new lists and gradually compact?
