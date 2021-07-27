@@ -19,7 +19,6 @@ package grondag.canvas.render.terrain.cluster.drawlist;
 import java.util.IdentityHashMap;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
-import org.jetbrains.annotations.Nullable;
 import org.lwjgl.PointerBuffer;
 
 import grondag.canvas.render.terrain.cluster.ClusteredDrawableStorage;
@@ -30,53 +29,34 @@ import grondag.canvas.render.terrain.cluster.VertexClusterRealm;
 import grondag.canvas.varia.GFX;
 
 public class ClusterDrawList {
-	record DrawSpec(Slab slab, IndexSlab indexSlab, int triVertexCount, int indexBaseByteAddress) { }
-	record NewDrawSpec(Slab slab, int[] triVertexCount, int[] baseIndices, PointerBuffer indexPointers) { }
+	record DrawSpec(Slab slab, int[] triVertexCount, int[] baseIndices, PointerBuffer indexPointers) { }
 
-	final ObjectArrayList<ClusteredDrawableStorage> stores = new ObjectArrayList<>();
+	final ObjectArrayList<ClusteredDrawableStorage> regions = new ObjectArrayList<>();
 	final VertexCluster cluster;
-	final RealmDrawList owner;
+	final RealmDrawList realmList;
 	private final ObjectArrayList<DrawSpec> drawSpecs = new ObjectArrayList<>();
-	private final ObjectArrayList<NewDrawSpec> newDrawSpecs = new ObjectArrayList<>();
 
 	ClusterDrawList(VertexCluster cluster, RealmDrawList owner) {
 		this.cluster = cluster;
-		this.owner = owner;
+		this.realmList = owner;
 	}
 
-	IndexSlab build(IndexSlab indexSlab) {
-		buildNewNew();
-		return null;
-	}
-
-	IndexSlab buildOld(IndexSlab indexSlab) {
+	void build() {
 		assert drawSpecs.isEmpty();
 
 		if (cluster.realm == VertexClusterRealm.TRANSLUCENT) {
-			indexSlab = buildTranslucent(indexSlab);
+			buildTranslucent();
 		} else {
-			indexSlab = buildSolid(indexSlab);
-		}
-
-		return indexSlab;
-	}
-
-	void buildNewNew() {
-		assert newDrawSpecs.isEmpty();
-
-		if (cluster.realm == VertexClusterRealm.TRANSLUCENT) {
-			buildTranslucentNew();
-		} else {
-			buildSolidNew();
+			buildSolid();
 		}
 	}
 
 	/** Minimizes binds/calls. */
-	private void buildSolidNew() {
+	private void buildSolid() {
 		final IdentityHashMap<Slab, SolidSpecList> map = new IdentityHashMap<>();
 
 		// first group regions by slab
-		for (var region : stores) {
+		for (var region : regions) {
 			for (var alloc : region.allocation().allocations()) {
 				var list = map.get(alloc.slab);
 
@@ -92,21 +72,21 @@ public class ClusterDrawList {
 
 		for (var list: map.values()) {
 			assert list.specQuadVertexCount <= IndexSlab.MAX_INDEX_SLAB_QUAD_VERTEX_COUNT;
-			addSpecNew(list, list.specQuadVertexCount);
+			addSpec(list, list.specQuadVertexCount);
 		}
 	}
 
 	/** Maintains region sort order at the cost of extra binds/calls if needed. */
-	private void buildTranslucentNew() {
+	private void buildTranslucent() {
 		Slab lastSlab = null;
 		final ObjectArrayList<SlabAllocation> specAllocations = new ObjectArrayList<>();
 		int specQuadVertexCount = 0;
 
-		for (var region : stores) {
+		for (var region : regions) {
 			for (var alloc : region.allocation().allocations()) {
 				if (alloc.slab != lastSlab) {
 					if (lastSlab != null) {
-						addSpecNew(specAllocations, specQuadVertexCount);
+						addSpec(specAllocations, specQuadVertexCount);
 					}
 
 					specQuadVertexCount = 0;
@@ -118,14 +98,14 @@ public class ClusterDrawList {
 			}
 		}
 
-		addSpecNew(specAllocations, specQuadVertexCount);
+		addSpec(specAllocations, specQuadVertexCount);
 	}
 
 	/**
 	 * Returns the index slab that should be used for next call.
 	 * Does nothing if region list is empty and clears region list when done.
 	 */
-	private void addSpecNew(ObjectArrayList<SlabAllocation> specAllocations, int specQuadVertexCount) {
+	private void addSpec(ObjectArrayList<SlabAllocation> specAllocations, int specQuadVertexCount) {
 		assert specQuadVertexCount >= 0;
 		assert !specAllocations.isEmpty() : "Vertex count is non-zero but region list is empty.";
 
@@ -144,107 +124,16 @@ public class ClusterDrawList {
 			pBuff.put(i, 0L);
 		}
 
-		newDrawSpecs.add(new NewDrawSpec(slab, vcount, bIndex, pBuff));
+		drawSpecs.add(new DrawSpec(slab, vcount, bIndex, pBuff));
 		specAllocations.clear();
-	}
-
-	/** Maintains region sort order at the cost of extra binds/calls if needed. */
-	private IndexSlab buildTranslucent(IndexSlab indexSlab) {
-		Slab lastSlab = null;
-		final ObjectArrayList<SlabAllocation> specAllocations = new ObjectArrayList<>();
-		int specQuadVertexCount = 0;
-
-		for (var region : stores) {
-			for (var alloc : region.allocation().allocations()) {
-				if (alloc.slab != lastSlab) {
-					// NB: addSpec checks for empty region list (will be true for first region)
-					// and also clears the list when done.
-					indexSlab = addSpec(indexSlab, specAllocations, specQuadVertexCount);
-					specQuadVertexCount = 0;
-					lastSlab = alloc.slab;
-				}
-
-				specAllocations.add(alloc);
-				specQuadVertexCount += alloc.quadVertexCount;
-			}
-		}
-
-		indexSlab = addSpec(indexSlab, specAllocations, specQuadVertexCount);
-
-		return indexSlab;
 	}
 
 	private static class SolidSpecList extends ObjectArrayList<SlabAllocation> {
 		private int specQuadVertexCount;
 	}
 
-	/** Minimizes binds/calls. */
-	private IndexSlab buildSolid(IndexSlab indexSlab) {
-		final IdentityHashMap<Slab, SolidSpecList> map = new IdentityHashMap<>();
-
-		// first group regions by slab
-		for (var region : stores) {
-			for (var alloc : region.allocation().allocations()) {
-				var list = map.get(alloc.slab);
-
-				if (list == null) {
-					list = new SolidSpecList();
-					map.put(alloc.slab, list);
-				}
-
-				list.add(alloc);
-				list.specQuadVertexCount += alloc.quadVertexCount;
-			}
-		}
-
-		for (var list: map.values()) {
-			assert list.specQuadVertexCount <= IndexSlab.MAX_INDEX_SLAB_QUAD_VERTEX_COUNT;
-			indexSlab = addSpec(indexSlab, list, list.specQuadVertexCount);
-		}
-
-		return indexSlab;
-	}
-
-	/**
-	 * Returns the index slab that should be used for next call.
-	 * Does nothing if region list is empty and clears region list when done.
-	 */
-	private @Nullable IndexSlab addSpec(@Nullable IndexSlab indexSlab, ObjectArrayList<SlabAllocation> specAllocations, int specQuadVertexCount) {
-		assert specQuadVertexCount >= 0;
-
-		if (specQuadVertexCount == 0) {
-			return indexSlab;
-		}
-
-		assert !specAllocations.isEmpty() : "Vertex count is non-zero but region list is empty.";
-
-		if (indexSlab == null || indexSlab.availableQuadVertexCount() < specQuadVertexCount) {
-			if (indexSlab != null) {
-				indexSlab.upload();
-			}
-
-			indexSlab = IndexSlab.claim();
-			owner.indexSlabs.add(indexSlab);
-		}
-
-		final int byteOffset = indexSlab.nextByteOffset();
-		var slab = specAllocations.get(0).slab;
-
-		for (var alloc : specAllocations) {
-			assert alloc.slab == slab;
-			indexSlab.allocateAndLoad(alloc.baseQuadVertexIndex, alloc.quadVertexCount);
-		}
-
-		assert byteOffset + specQuadVertexCount * IndexSlab.INDEX_QUAD_VERTEX_TO_TRIANGLE_BYTES_MULTIPLIER == indexSlab.nextByteOffset();
-
-		drawSpecs.add(new DrawSpec(slab, indexSlab, specQuadVertexCount / 4 * 6, byteOffset));
-		specAllocations.clear();
-
-		return indexSlab;
-	}
-
 	public void draw() {
-		drawNewNew();
+		drawNew();
 	}
 
 	public void drawNew() {
@@ -252,19 +141,6 @@ public class ClusterDrawList {
 
 		for (int i = 0; i < limit; ++i) {
 			var spec = drawSpecs.get(i);
-
-			spec.slab.bind();
-			spec.indexSlab.bind();
-			//GFX.glMultiDrawElementsBaseVertex(GFX.GL_TRIANGLES, vertexCounts, GFX.GL_UNSIGNED_SHORT, indexPointers, baseIndices);
-			GFX.drawElements(GFX.GL_TRIANGLES, spec.triVertexCount, GFX.GL_UNSIGNED_SHORT, spec.indexBaseByteAddress);
-		}
-	}
-
-	public void drawNewNew() {
-		final int limit = newDrawSpecs.size();
-
-		for (int i = 0; i < limit; ++i) {
-			var spec = newDrawSpecs.get(i);
 
 			spec.slab.bind();
 			IndexSlab.fullSlabIndex().bind();
@@ -276,12 +152,12 @@ public class ClusterDrawList {
 
 	// WIP: use a version of this for new lists and gradually compact?
 	public void drawOld() {
-		final int limit = stores.size();
+		final int limit = regions.size();
 
 		Slab lastSlab = null;
 
 		for (int regionIndex = 0; regionIndex < limit; ++regionIndex) {
-			ClusteredDrawableStorage store = stores.get(regionIndex);
+			ClusteredDrawableStorage store = regions.get(regionIndex);
 
 			for (var alloc : store.allocation().allocations()) {
 				Slab slab = alloc.slab;
@@ -303,10 +179,10 @@ public class ClusterDrawList {
 
 	public void add(ClusteredDrawableStorage storage) {
 		assert storage.allocation().cluster() == cluster;
-		stores.add(storage);
+		regions.add(storage);
 	}
 
 	public void invalidate() {
-		owner.invalidate();
+		realmList.invalidate();
 	}
 }

@@ -55,25 +55,11 @@ public class RealmDrawList extends AbstractDrawableRegionList {
 			clusterList.add(storage);
 		}
 
-		IndexSlab indexSlab = null;
 		final int listCount = clusterLists.size();
 
 		for (int i = 0; i < listCount; ++i) {
-			indexSlab = clusterLists.get(i).build(indexSlab);
+			clusterLists.get(i).build();
 		}
-
-		if (indexSlab != null) {
-			indexSlab.upload();
-		}
-
-		//int indexUsedBytes = 0; int indexCapacityBytes = 0;
-		//
-		//for (var idxSlab : indexSlabs) {
-		//	indexUsedBytes += idxSlab.nextByteOffset();
-		//	indexCapacityBytes += idxSlab.capacityBytes();
-		//}
-
-		//System.out.println(String.format("Slabs: %d occ: %d", indexSlabs.size(), 100L * indexUsedBytes / indexCapacityBytes));
 	}
 
 	private void rebuildIfInvalid() {

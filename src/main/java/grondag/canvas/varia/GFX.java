@@ -877,6 +877,11 @@ public class GFX extends GL46C {
 		assert logError("glMultiDrawElementsBaseVertex");
 	}
 
+	public static void multiDrawElementsBaseVertex(int mode, IntBuffer count, int type, PointerBuffer indices, IntBuffer basevertex) {
+		glMultiDrawElementsBaseVertex(mode, count, type, indices, basevertex);
+		assert logError("glMultiDrawElementsBaseVertex");
+	}
+
 	public static void bufferSubData(int target, long offsetBytes, long sizeBytes, ByteBuffer data) {
 		nglBufferSubData(target, offsetBytes, sizeBytes, memAddress(data));
 		assert logError("nglBufferSubData");
