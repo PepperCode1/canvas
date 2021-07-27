@@ -16,11 +16,16 @@
 
 package grondag.canvas.render.terrain.cluster.drawlist;
 
+import java.nio.IntBuffer;
 import java.util.IdentityHashMap;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import org.lwjgl.PointerBuffer;
 
+import grondag.canvas.buffer.util.BufferSynchronizer;
+import grondag.canvas.buffer.util.BufferSynchronizer.SynchronizedBuffer;
+import grondag.canvas.buffer.util.DirectBufferAllocator;
+import grondag.canvas.buffer.util.DirectBufferAllocator.DirectBufferReference;
 import grondag.canvas.render.terrain.cluster.ClusteredDrawableStorage;
 import grondag.canvas.render.terrain.cluster.Slab;
 import grondag.canvas.render.terrain.cluster.VertexCluster;
@@ -29,7 +34,17 @@ import grondag.canvas.render.terrain.cluster.VertexClusterRealm;
 import grondag.canvas.varia.GFX;
 
 public class ClusterDrawList {
-	record DrawSpec(Slab slab, int[] triVertexCount, int[] baseIndices, PointerBuffer indexPointers) { }
+	record DrawSpec(Slab slab, DirectBufferReference triVertexCount, DirectBufferReference baseIndices, PointerBuffer indexPointers) implements SynchronizedBuffer {
+		void release() {
+			triVertexCount.release();
+			baseIndices.release();
+		}
+
+		@Override
+		public void onBufferSync() {
+			release();
+		}
+	}
 
 	final ObjectArrayList<ClusteredDrawableStorage> regions = new ObjectArrayList<>();
 	final VertexCluster cluster;
@@ -38,7 +53,13 @@ public class ClusterDrawList {
 
 	ClusterDrawList(VertexCluster cluster, RealmDrawList owner) {
 		this.cluster = cluster;
-		this.realmList = owner;
+		realmList = owner;
+	}
+
+	void release() {
+		for (var spec : drawSpecs) {
+			BufferSynchronizer.accept(spec);
+		}
 	}
 
 	void build() {
@@ -112,19 +133,21 @@ public class ClusterDrawList {
 		final var slab = specAllocations.get(0).slab;
 		final var limit = specAllocations.size();
 
-		final int[] vcount = new int[limit];
-		final int[] bIndex = new int[limit];
+		final DirectBufferReference vcountBuff = DirectBufferAllocator.claim(limit * 4);
+		final IntBuffer vCount = vcountBuff.asIntBuffer();
+		final DirectBufferReference bIndexBuff = DirectBufferAllocator.claim(limit * 4);
+		final IntBuffer bIndex = bIndexBuff.asIntBuffer();
 		final var pBuff = PointerBuffer.allocateDirect(limit);
 
 		for (int i = 0; i < limit; ++i) {
 			final var alloc = specAllocations.get(i);
 			assert alloc.slab == slab;
-			vcount[i] = alloc.triVertexCount();
-			bIndex[i] = alloc.baseQuadVertexIndex;
+			vCount.put(i, alloc.triVertexCount());
+			bIndex.put(i, alloc.baseQuadVertexIndex);
 			pBuff.put(i, 0L);
 		}
 
-		drawSpecs.add(new DrawSpec(slab, vcount, bIndex, pBuff));
+		drawSpecs.add(new DrawSpec(slab, vcountBuff, bIndexBuff, pBuff));
 		specAllocations.clear();
 	}
 
@@ -144,7 +167,7 @@ public class ClusterDrawList {
 
 			spec.slab.bind();
 			IndexSlab.fullSlabIndex().bind();
-			GFX.glMultiDrawElementsBaseVertex(GFX.GL_TRIANGLES, spec.triVertexCount, GFX.GL_UNSIGNED_SHORT, spec.indexPointers, spec.baseIndices);
+			GFX.glMultiDrawElementsBaseVertex(GFX.GL_TRIANGLES, spec.triVertexCount.asIntBuffer(), GFX.GL_UNSIGNED_SHORT, spec.indexPointers, spec.baseIndices.asIntBuffer());
 		}
 
 		IndexSlab.fullSlabIndex().unbind();

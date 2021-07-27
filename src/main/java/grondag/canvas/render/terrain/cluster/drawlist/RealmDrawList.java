@@ -29,7 +29,6 @@ import grondag.canvas.varia.GFX;
 
 public class RealmDrawList extends AbstractDrawableRegionList {
 	final ObjectArrayList<ClusterDrawList> clusterLists = new ObjectArrayList<>();
-	final ObjectArrayList<IndexSlab> indexSlabs = new ObjectArrayList<>();
 	boolean isInvalid = false;
 
 	private RealmDrawList(final ObjectArrayList<DrawableRegion> regions, RenderState renderState) {
@@ -94,11 +93,10 @@ public class RealmDrawList extends AbstractDrawableRegionList {
 
 	@Override
 	protected void closeInner() {
-		for (var indexSlab : indexSlabs) {
-			indexSlab.release();
+		for (var list : clusterLists) {
+			list.release();
 		}
 
-		indexSlabs.clear();
 		clusterLists.clear();
 	}
 

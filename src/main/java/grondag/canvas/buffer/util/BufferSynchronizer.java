@@ -55,14 +55,14 @@ public class BufferSynchronizer {
 
 		private boolean complete(long waitNanos) {
 			assert fence != 0;
-			final long nanos = System.nanoTime();
+			//final long nanos = System.nanoTime();
 
 			final int status = GFX.clientWaitSync(fence, 0, waitNanos);
 
 			if (status == GFX.GL_ALREADY_SIGNALED || status == GFX.GL_CONDITION_SATISFIED) {
-				if (status == GFX.GL_CONDITION_SATISFIED) {
-					System.out.println("Fence wait time (ms): " + (System.nanoTime() - nanos) / 1000000.0);
-				}
+				//if (status == GFX.GL_CONDITION_SATISFIED) {
+				//	System.out.println("Fence wait time (ms): " + (System.nanoTime() - nanos) / 1000000.0);
+				//}
 
 				release();
 				return true;
@@ -91,7 +91,5 @@ public class BufferSynchronizer {
 
 	public interface SynchronizedBuffer {
 		void onBufferSync();
-
-		void shutdown();
 	}
 }

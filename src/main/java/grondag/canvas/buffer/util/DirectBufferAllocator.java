@@ -20,6 +20,7 @@ import java.lang.ref.PhantomReference;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -33,12 +34,15 @@ import org.lwjgl.system.Platform;
 import org.lwjgl.system.jemalloc.JEmalloc;
 
 import grondag.canvas.CanvasMod;
+import grondag.canvas.buffer.util.BufferSynchronizer.SynchronizedBuffer;
 import grondag.canvas.config.Configurator;
 
 public class DirectBufferAllocator {
-	public static class DirectBufferReference {
+	// PERF: trial unsafe access for the native versions
+	public static class DirectBufferReference implements SynchronizedBuffer {
 		private ByteBuffer buffer;
 		private final Runnable dealloc;
+		private IntBuffer intBuffer;
 
 		private DirectBufferReference(ByteBuffer buffer, Runnable dealloc) {
 			this.buffer = buffer;
@@ -49,11 +53,28 @@ public class DirectBufferAllocator {
 			return buffer;
 		}
 
+		public @Nullable IntBuffer asIntBuffer() {
+			IntBuffer result = intBuffer;
+
+			if (result == null && buffer != null) {
+				result = buffer.asIntBuffer();
+				intBuffer = result;
+			}
+
+			return result;
+		}
+
 		public void release() {
 			if (buffer != null) {
 				dealloc.run();
 				buffer = null;
+				intBuffer = null;
 			}
+		}
+
+		@Override
+		public void onBufferSync() {
+			release();
 		}
 	}
 
