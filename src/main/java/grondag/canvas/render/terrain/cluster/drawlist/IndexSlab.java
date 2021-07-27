@@ -16,6 +16,7 @@
 
 package grondag.canvas.render.terrain.cluster.drawlist;
 
+import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
 import java.util.ArrayDeque;
 
@@ -33,7 +34,7 @@ public class IndexSlab extends AbstractGlBuffer implements SynchronizedBuffer {
 	private boolean isClaimed = false;
 	private int headQuadVertexIndex = 0;
 	private TransferBuffer transferBuffer;
-	private ShortBuffer uploadBuffer;
+	private IntBuffer uploadBuffer;
 
 	private IndexSlab() {
 		// NB: STATIC makes a huge positive difference on AMD at least
@@ -44,7 +45,7 @@ public class IndexSlab extends AbstractGlBuffer implements SynchronizedBuffer {
 	private void prepareForClaim() {
 		isClaimed = true;
 		transferBuffer = TransferBuffers.claim(BYTES_PER_INDEX_SLAB);
-		uploadBuffer = transferBuffer.shortBuffer();
+		uploadBuffer = transferBuffer.intBuffer();
 	}
 
 	void release() {
@@ -139,10 +140,10 @@ public class IndexSlab extends AbstractGlBuffer implements SynchronizedBuffer {
 	}
 
 	/** Ideally large enough to handle an entire draw list but not so large to push it out of VRAM. */
-	public static final int BYTES_PER_INDEX_SLAB = 0x200000;
+	public static final int BYTES_PER_INDEX_SLAB = 0x400000;
 
 	/** Six tri vertices per four quad vertices at 2 bytes each gives 6 / 4 * 2 = 3. */
-	public static final int INDEX_QUAD_VERTEX_TO_TRIANGLE_BYTES_MULTIPLIER = 3;
+	public static final int INDEX_QUAD_VERTEX_TO_TRIANGLE_BYTES_MULTIPLIER = 6;
 
 	/** Largest multiple of four vertices that, when expanded to triangles, will fit within the index buffer. */
 	public static final int MAX_INDEX_SLAB_QUAD_VERTEX_COUNT = (BYTES_PER_INDEX_SLAB / INDEX_QUAD_VERTEX_TO_TRIANGLE_BYTES_MULTIPLIER) & 0xFFFFFFF8;

@@ -21,11 +21,10 @@ import java.util.IdentityHashMap;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import org.lwjgl.PointerBuffer;
+import org.lwjgl.system.MemoryUtil;
 
 import grondag.canvas.buffer.util.BufferSynchronizer;
 import grondag.canvas.buffer.util.BufferSynchronizer.SynchronizedBuffer;
-import grondag.canvas.buffer.util.DirectBufferAllocator;
-import grondag.canvas.buffer.util.DirectBufferAllocator.DirectBufferReference;
 import grondag.canvas.render.terrain.cluster.ClusteredDrawableStorage;
 import grondag.canvas.render.terrain.cluster.Slab;
 import grondag.canvas.render.terrain.cluster.VertexCluster;
@@ -34,14 +33,23 @@ import grondag.canvas.render.terrain.cluster.VertexClusterRealm;
 import grondag.canvas.varia.GFX;
 
 public class ClusterDrawList {
-	record DrawSpec(Slab slab, DirectBufferReference triVertexCount, PointerBuffer indexPointers) implements SynchronizedBuffer {
+	record DrawSpec(Slab slab, IntBuffer triVertexCount, PointerBuffer indexPointers, int size) implements SynchronizedBuffer {
 		void release() {
-			triVertexCount.release();
+			MemoryUtil.memFree(triVertexCount);
+			MemoryUtil.memFree(indexPointers);
 		}
 
 		@Override
 		public void onBufferSync() {
 			release();
+		}
+		
+		IntBuffer safeTriVertexCount() {
+			 return MemoryUtil.memIntBuffer(MemoryUtil.memAddress(triVertexCount), size);
+		}
+		
+		PointerBuffer safeIndexPointer() {
+			return MemoryUtil.memPointerBuffer(MemoryUtil.memAddress(indexPointers), size);
 		}
 	}
 
@@ -132,9 +140,8 @@ public class ClusterDrawList {
 		final var slab = specAllocations.get(0).slab;
 		final var limit = specAllocations.size();
 
-		final DirectBufferReference vertexCountBuff = DirectBufferAllocator.claim(limit * 4);
-		final IntBuffer vertexCount = vertexCountBuff.asIntBuffer();
-		final var indices = PointerBuffer.allocateDirect(limit);
+		final IntBuffer vertexCount = MemoryUtil.memAllocInt(limit * 4);
+		final PointerBuffer indices = MemoryUtil.memAllocPointer(limit);
 
 		for (int i = 0; i < limit; ++i) {
 			final var alloc = specAllocations.get(i);
@@ -143,10 +150,11 @@ public class ClusterDrawList {
 			indices.put(i, alloc.baseQuadVertexIndex * IndexSlab.INDEX_QUAD_VERTEX_TO_TRIANGLE_BYTES_MULTIPLIER);
 		}
 
-		drawSpecs.add(new DrawSpec(slab, vertexCountBuff, indices));
+		drawSpecs.add(new DrawSpec(slab, vertexCount, indices, limit));
 		specAllocations.clear();
 	}
 
+	@SuppressWarnings("serial")
 	private static class SolidSpecList extends ObjectArrayList<SlabAllocation> {
 		private int specQuadVertexCount;
 	}
@@ -162,7 +170,7 @@ public class ClusterDrawList {
 			final var spec = drawSpecs.get(i);
 			spec.slab.bind();
 			IndexSlab.fullSlabIndex().bind();
-			GFX.multiDrawElements(GFX.GL_TRIANGLES, spec.triVertexCount.asIntBuffer(), GFX.GL_UNSIGNED_SHORT, spec.indexPointers);
+			GFX.multiDrawElements(GFX.GL_TRIANGLES, spec.safeTriVertexCount(), GFX.GL_UNSIGNED_INT, spec.safeIndexPointer());
 		}
 
 		IndexSlab.fullSlabIndex().unbind();
@@ -188,7 +196,7 @@ public class ClusterDrawList {
 
 				// NB offset is baseQuadVertexIndex * 3 because the offset is in bytes
 				// six tri vertices per four quad vertices at 2 bytes each gives 6 / 4 * 2 = 3
-				GFX.drawElements(GFX.GL_TRIANGLES, alloc.triVertexCount(), GFX.GL_UNSIGNED_SHORT, alloc.baseQuadVertexIndex * IndexSlab.INDEX_QUAD_VERTEX_TO_TRIANGLE_BYTES_MULTIPLIER);
+				GFX.drawElements(GFX.GL_TRIANGLES, alloc.triVertexCount(), GFX.GL_UNSIGNED_INT, alloc.baseQuadVertexIndex * IndexSlab.INDEX_QUAD_VERTEX_TO_TRIANGLE_BYTES_MULTIPLIER);
 			}
 		}
 
