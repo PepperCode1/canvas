@@ -34,10 +34,9 @@ import grondag.canvas.render.terrain.cluster.VertexClusterRealm;
 import grondag.canvas.varia.GFX;
 
 public class ClusterDrawList {
-	record DrawSpec(Slab slab, DirectBufferReference triVertexCount, DirectBufferReference baseIndices, PointerBuffer indexPointers) implements SynchronizedBuffer {
+	record DrawSpec(Slab slab, DirectBufferReference triVertexCount, PointerBuffer indexPointers) implements SynchronizedBuffer {
 		void release() {
 			triVertexCount.release();
-			baseIndices.release();
 		}
 
 		@Override
@@ -133,21 +132,18 @@ public class ClusterDrawList {
 		final var slab = specAllocations.get(0).slab;
 		final var limit = specAllocations.size();
 
-		final DirectBufferReference vcountBuff = DirectBufferAllocator.claim(limit * 4);
-		final IntBuffer vCount = vcountBuff.asIntBuffer();
-		final DirectBufferReference bIndexBuff = DirectBufferAllocator.claim(limit * 4);
-		final IntBuffer bIndex = bIndexBuff.asIntBuffer();
-		final var pBuff = PointerBuffer.allocateDirect(limit);
+		final DirectBufferReference vertexCountBuff = DirectBufferAllocator.claim(limit * 4);
+		final IntBuffer vertexCount = vertexCountBuff.asIntBuffer();
+		final var indices = PointerBuffer.allocateDirect(limit);
 
 		for (int i = 0; i < limit; ++i) {
 			final var alloc = specAllocations.get(i);
 			assert alloc.slab == slab;
-			vCount.put(i, alloc.triVertexCount());
-			bIndex.put(i, alloc.baseQuadVertexIndex);
-			pBuff.put(i, 0L);
+			vertexCount.put(i, alloc.triVertexCount());
+			indices.put(i, alloc.baseQuadVertexIndex * IndexSlab.INDEX_QUAD_VERTEX_TO_TRIANGLE_BYTES_MULTIPLIER);
 		}
 
-		drawSpecs.add(new DrawSpec(slab, vcountBuff, bIndexBuff, pBuff));
+		drawSpecs.add(new DrawSpec(slab, vertexCountBuff, indices));
 		specAllocations.clear();
 	}
 
@@ -163,11 +159,10 @@ public class ClusterDrawList {
 		final int limit = drawSpecs.size();
 
 		for (int i = 0; i < limit; ++i) {
-			var spec = drawSpecs.get(i);
-
+			final var spec = drawSpecs.get(i);
 			spec.slab.bind();
 			IndexSlab.fullSlabIndex().bind();
-			GFX.glMultiDrawElementsBaseVertex(GFX.GL_TRIANGLES, spec.triVertexCount.asIntBuffer(), GFX.GL_UNSIGNED_SHORT, spec.indexPointers, spec.baseIndices.asIntBuffer());
+			GFX.multiDrawElements(GFX.GL_TRIANGLES, spec.triVertexCount.asIntBuffer(), GFX.GL_UNSIGNED_SHORT, spec.indexPointers);
 		}
 
 		IndexSlab.fullSlabIndex().unbind();
